@@ -1607,6 +1607,98 @@ async def test_async_anthropic_messages_handler_header_priority():
         assert captured_headers["X-Provider-Only"] == "keep-this-too"
 
 
+class _HeadersCaptured(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("forwarded", "extra", "provider_specific", "expected"),
+    [
+        pytest.param(
+            None,
+            {"anthropic-beta": "context-1m-2025-08-07"},
+            {"anthropic-beta": "claude-code-20250219"},
+            {"anthropic-beta": "claude-code-20250219,context-1m-2025-08-07"},
+            id="deployment-and-client-betas-are-unioned",
+        ),
+        pytest.param(
+            None,
+            {"Anthropic-Beta": "b,a"},
+            {"anthropic-beta": "a, c"},
+            {"anthropic-beta": "a,b,c"},
+            id="case-variants-fold-into-one-deduped-header",
+        ),
+        pytest.param(
+            {"anthropic-beta": "forwarded-beta"},
+            {"anthropic-beta": "deployment-beta"},
+            None,
+            {"anthropic-beta": "deployment-beta,forwarded-beta"},
+            id="forwarded-and-deployment-betas-are-unioned",
+        ),
+        pytest.param(
+            None,
+            {"ANTHROPIC-BETA": "z,y"},
+            None,
+            {"anthropic-beta": "y,z"},
+            id="lone-capitalised-key-is-lowercased",
+        ),
+        pytest.param(
+            None,
+            {"anthropic-beta": ["context-1m-2025-08-07"]},
+            {"anthropic-beta": "claude-code-20250219"},
+            {"anthropic-beta": "claude-code-20250219,context-1m-2025-08-07"},
+            id="deployment-list-and-client-string-are-unioned",
+        ),
+        pytest.param(
+            {"anthropic-beta": "forwarded-beta"},
+            {"anthropic-beta": "deployment-beta"},
+            {"anthropic-beta": ["client-beta"]},
+            {"anthropic-beta": "client-beta,deployment-beta,forwarded-beta"},
+            id="client-list-and-string-sources-are-unioned",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_anthropic_messages_handler_merges_anthropic_beta_across_header_sources(
+    forwarded: dict[str, str] | None,
+    extra: dict[str, str | list[str]] | None,
+    provider_specific: dict[str, str | list[str]] | None,
+    expected: dict[str, str],
+) -> None:
+    captured: Final[dict[str, object]] = {}  # mutable-ok: filled by the validate stub
+
+    async def capture_validate(**kwargs: object) -> tuple[dict[str, str], str]:
+        captured.update(kwargs["headers"])  # pyright: ignore[reportCallIssue, reportArgumentType]  # the stub receives the handler's headers dict
+        raise _HeadersCaptured
+
+    config: Final = Mock()
+    config.avalidate_anthropic_messages_environment = AsyncMock(side_effect=capture_validate)
+    config.should_filter_anthropic_beta_headers = Mock(return_value=False)
+    logging_obj: Final = Mock()
+    logging_obj.model_call_details = {}
+
+    with (
+        patch(
+            "litellm.litellm_core_utils.get_provider_specific_headers.ProviderSpecificHeaderUtils.get_provider_specific_headers",
+            return_value=provider_specific,
+        ),
+        pytest.raises(_HeadersCaptured),
+    ):
+        await BaseLLMHTTPHandler().async_anthropic_messages_handler(  # pyright: ignore[reportUnknownMemberType]  # messages is typed as a bare list[dict]
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            anthropic_messages_provider_config=config,
+            anthropic_messages_optional_request_params={},
+            custom_llm_provider="azure_ai",
+            litellm_params=GenericLiteLLMParams(),
+            logging_obj=logging_obj,
+            client=AsyncMock(),
+            kwargs={"headers": forwarded, "extra_headers": extra},
+        )
+
+    assert {name: value for name, value in captured.items() if name.lower() == "anthropic-beta"} == expected
+
+
 @pytest.mark.asyncio
 async def test_async_anthropic_messages_handler_drops_top_level_and_nested_params():
     """
