@@ -41,6 +41,11 @@ export interface generalSettingsItem {
   field_default_value?: any;
 }
 
+const asWildcardRoutesSwitch = (setting: generalSettingsItem): generalSettingsItem =>
+  setting.field_name === "return_wildcard_routes" && setting.field_value != null
+    ? { ...setting, field_value: setting.field_value === true }
+    : setting;
+
 const NUMERIC_INPUT_WIDTH = "w-36";
 
 const toNumericValue = (raw: string): number | null => (raw === "" ? null : Number(raw));
@@ -248,7 +253,7 @@ const GeneralSettings: React.FC<GeneralSettingsPageProps> = ({ accessToken, user
     }
     getGeneralSettingsCall(accessToken).then((data) => {
       let general_settings = data;
-      setGeneralSettings(general_settings);
+      setGeneralSettings(general_settings.map(asWildcardRoutesSwitch));
     });
   }, [accessToken]);
 

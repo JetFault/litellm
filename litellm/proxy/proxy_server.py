@@ -19887,12 +19887,14 @@ async def update_config_general_settings(
             detail={"error": f"Invalid field={data.field_name} passed in."},
         )
 
+    strict: Final = data.field_name == "return_wildcard_routes"
     try:
-        ConfigGeneralSettings.model_validate({data.field_name: requested_value})
+        ConfigGeneralSettings.model_validate({data.field_name: requested_value}, strict=strict)
     except Exception:
+        expected: Final = f" {data.field_name} must be a JSON boolean or null." if strict else ""
         raise HTTPException(
             status_code=400,
-            detail={"error": f"Invalid type of field value={type(requested_value)} passed in."},
+            detail={"error": f"Invalid type of field value={type(requested_value)} passed in.{expected}"},
         )
 
     if data.field_name == "alerting_args":

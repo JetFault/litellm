@@ -319,3 +319,49 @@ it("keeps a new baggage mapping unsaved until every field the backend requires i
     ["token", "request_tag_mappings", [{ header: "baggage", key: "entrypoint", value: "a", tag: "usecase:support" }]],
   ]);
 });
+
+async function renderBooleanSwitch(fieldName: string, storedValue: unknown) {
+  vi.mocked(getGeneralSettingsCall).mockResolvedValue([
+    {
+      field_name: fieldName,
+      field_type: "Boolean",
+      field_value: storedValue,
+      field_description: "flag",
+      stored_in_db: true,
+    },
+  ]);
+  vi.mocked(updateConfigFieldSetting).mockClear();
+  const user = userEvent.setup();
+  renderWithProviders(<GeneralSettings accessToken="token" userRole="Admin" userID="user" />);
+  await user.click(screen.getByRole("tab", { name: "General" }));
+  return within(await screen.findByRole("row", { name: new RegExp(fieldName) })).getByRole("switch");
+}
+
+it("shows return_wildcard_routes stored as the string true as off", async () => {
+  expect(await renderBooleanSwitch("return_wildcard_routes", "true")).not.toBeChecked();
+});
+
+it.each([
+  ["return_wildcard_routes", true],
+  ["store_prompts_in_spend_logs", "true"],
+])("shows %s stored as %j as on", async (fieldName, storedValue) => {
+  expect(await renderBooleanSwitch(fieldName, storedValue)).toBeChecked();
+});
+
+it("resends a return_wildcard_routes stored as the string true as the false the switch shows", async () => {
+  const user = userEvent.setup();
+  await renderBooleanSwitch("return_wildcard_routes", "true");
+  await user.click(
+    within(screen.getByRole("row", { name: /return_wildcard_routes/ })).getByRole("button", { name: "Update" }),
+  );
+  expect(updateConfigFieldSetting).toHaveBeenLastCalledWith("token", "return_wildcard_routes", false);
+});
+
+it("leaves an unset return_wildcard_routes unset when Update is clicked", async () => {
+  const user = userEvent.setup();
+  expect(await renderBooleanSwitch("return_wildcard_routes", null)).not.toBeChecked();
+  await user.click(
+    within(screen.getByRole("row", { name: /return_wildcard_routes/ })).getByRole("button", { name: "Update" }),
+  );
+  expect(updateConfigFieldSetting).not.toHaveBeenCalled();
+});

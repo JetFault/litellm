@@ -763,6 +763,93 @@ def test_config_list_exposes_and_saves_wildcard_routes_toggle(
         assert updated.field_value is enabled
 
 
+@pytest.mark.parametrize("field_value", ("true", "false", 1, 0))
+def test_config_field_update_rejects_wildcard_routes_that_is_not_a_boolean(
+    client: TestClient,
+    auth_as: Callable[..., contextlib.AbstractContextManager[object]],
+    mock_prisma: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    field_value: object,
+) -> None:
+    """`/v1/models` honors only a stored `True`, so a stored "true" would show on in the UI and act off."""
+    from litellm.proxy import proxy_server as ps
+    from litellm.proxy._types import LitellmUserRoles
+
+    table: Final = _install_litellm_config(mock_prisma)
+    monkeypatch.setattr(ps, "prisma_client", mock_prisma)
+    _seed_settings_store(monkeypatch, {})
+    monkeypatch.setattr(ps, "general_settings", ps.proxy_config.settings)
+
+    with auth_as(LitellmUserRoles.PROXY_ADMIN):
+        response: Final = client.post(
+            "/config/field/update",
+            json={
+                "field_name": "return_wildcard_routes",
+                "field_value": field_value,
+                "config_type": "general_settings",
+            },
+        )
+
+    assert response.status_code == 400, response.text
+    assert "return_wildcard_routes must be a JSON boolean" in response.text
+    table.upsert.assert_not_called()
+
+
+def test_config_field_update_keeps_lax_booleans_for_other_settings(
+    client: TestClient,
+    auth_as: Callable[..., contextlib.AbstractContextManager[object]],
+    mock_prisma: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic import TypeAdapter
+
+    from litellm.proxy import proxy_server as ps
+    from litellm.proxy._types import LitellmUserRoles
+
+    table: Final = _install_litellm_config(mock_prisma)
+    monkeypatch.setattr(ps, "prisma_client", mock_prisma)
+    _seed_settings_store(monkeypatch, {})
+    monkeypatch.setattr(ps, "general_settings", ps.proxy_config.settings)
+
+    with auth_as(LitellmUserRoles.PROXY_ADMIN):
+        response: Final = client.post(
+            "/config/field/update",
+            json={
+                "field_name": "store_prompts_in_spend_logs",
+                "field_value": "true",
+                "config_type": "general_settings",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    persisted: Final = TypeAdapter(dict[str, str]).validate_json(
+        table.upsert.call_args.kwargs["data"]["create"]["param_value"]
+    )
+    assert persisted == {"store_prompts_in_spend_logs": "true"}
+
+
+def test_config_update_still_coerces_wildcard_routes_string_to_boolean(
+    client: TestClient,
+    auth_as: Callable[..., contextlib.AbstractContextManager[object]],
+    mock_prisma: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from litellm.proxy import proxy_server as ps
+    from litellm.proxy._types import LitellmUserRoles
+
+    table: Final = _install_litellm_config(mock_prisma)
+    monkeypatch.setattr(ps, "prisma_client", mock_prisma)
+    fake_proxy_config: Final = MagicMock()
+    fake_proxy_config.add_deployment = AsyncMock()
+    monkeypatch.setattr(ps, "proxy_config", fake_proxy_config)
+
+    with auth_as(LitellmUserRoles.PROXY_ADMIN):
+        response: Final = client.post("/config/update", json={"general_settings": {"return_wildcard_routes": "true"}})
+
+    assert response.status_code == 200, response.text
+    assert json.loads(table.upsert.call_args.kwargs["data"]["create"]["param_value"])["return_wildcard_routes"] is True
+
+
 def test_config_field_update_accepts_config_reload_interval(client, auth_as, mock_prisma, monkeypatch):
     """POST /config/field/update accepts proxy_config_reload_interval_seconds and persists
     it to the DB general_settings row for all pods to pick up."""
