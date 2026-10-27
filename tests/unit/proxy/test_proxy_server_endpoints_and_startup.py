@@ -1876,6 +1876,24 @@ async def test_proxy_startup_stops_when_the_requested_migration_fails(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_proxy_startup_after_a_failed_migration_does_not_reuse_the_closed_client(monkeypatch, tmp_path):
+    from fastapi import FastAPI
+
+    from litellm.proxy.proxy_server import proxy_startup_event
+
+    _boot_with_general_settings(monkeypatch, tmp_path, {"master_key": "sk-a-safe-master-key"})
+    monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", _PrismaClientWhoseDatabaseRejectsQueries())
+    monkeypatch.setenv("LITELLM_MIGRATE_FROM_MASTER_KEY", PUBLICLY_KNOWN_KEY)
+    with pytest.raises(RuntimeError, match="permission denied"):
+        async with proxy_startup_event(FastAPI()):
+            pass
+
+    monkeypatch.setenv("LITELLM_MIGRATE_FROM_MASTER_KEY", "")
+    async with proxy_startup_event(FastAPI()) as state:
+        assert state["database"] is None
+
+
+@pytest.mark.asyncio
 async def test_proxy_startup_names_the_config_file_that_set_the_unsafe_key(monkeypatch, tmp_path):
     from fastapi import FastAPI
 

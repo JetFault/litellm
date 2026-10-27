@@ -1420,6 +1420,11 @@ async def _connect_to_count_stored_values() -> SupportsRawQueries:
     return client.writer_db
 
 
+def _forget_prisma_client() -> None:
+    global prisma_client  # noqa: PLW0603  # routes still read this global until they move to DatabaseDependency
+    prisma_client = None  # rebind-ok: a closed client must not survive into the next lifespan entry
+
+
 @asynccontextmanager
 async def proxy_startup_event(app: FastAPI) -> AsyncGenerator[ProxyLifespanState, None]:
     async with AsyncExitStack() as resources, _proxy_lifespan(app, resources) as state:
@@ -1551,6 +1556,7 @@ async def _proxy_lifespan(app: FastAPI, resources: AsyncExitStack) -> AsyncGener
             )
         )
 
+    resources.callback(_forget_prisma_client)
     database: Final = await resources.enter_async_context(
         database_runtime.lifespan(None if prisma_client is None else database_runtime.Database(prisma=prisma_client))
     )
